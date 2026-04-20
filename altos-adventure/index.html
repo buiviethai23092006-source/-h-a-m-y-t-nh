@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <meta name="description" content="Alto's Adventure 2D Clone">
+    <title>🏔️ Alto's Adventure 2D</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* Extra styles specific to pure 2D canvas */
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background-color: #1e1b4b; /* Base sky color */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- === HUD OVERLAY === -->
+    <div id="hud">
+        <div class="hud-left">
+            <span class="hud-label">Score</span>
+            <span class="hud-value" id="hud-score">0</span>
+            <div class="hud-speed-container">
+                <span id="hud-speed">0 km/h</span>
+            </div>
+        </div>
+        <div class="hud-right">
+            <span class="hud-label">Distance</span>
+            <span class="hud-value" id="hud-distance">0m</span>
+        </div>
+    </div>
+
+    <!-- === COMBO DISPLAY === -->
+    <div id="hud-combo">x1</div>
+
+    <!-- === TRICK TEXT === -->
+    <div id="hud-trick"></div>
+
+    <!-- === STATE INDICATOR === -->
+    <div id="hud-state">GROUNDED</div>
+
+    <!-- === START SCREEN === -->
+    <div id="start-screen">
+        <div class="start-title">Alto</div>
+        <div class="start-subtitle">2D Canvas Edition</div>
+        <div class="start-instruction">Tap or Click to Start</div>
+        <div class="start-controls">
+            <div class="control-hint">
+                <span class="control-key">Click</span> / <span class="control-key">Space</span> — Jump
+            </div>
+            <div class="control-hint">
+                <span class="control-key">Hold</span> — Backflip
+            </div>
+        </div>
+    </div>
+
+    <!-- === GAME OVER SCREEN === -->
+    <div id="game-over">
+        <div class="game-over-title">Game Over</div>
+        <div class="game-over-stats">
+            <div class="stat-block">
+                <span class="stat-value" id="final-score">0</span>
+                <span class="stat-label">Score</span>
+            </div>
+            <div class="stat-block">
+                <span class="stat-value" id="final-distance">0m</span>
+                <span class="stat-label">Distance</span>
+            </div>
+        </div>
+        <div class="game-over-restart">Tap to Restart</div>
+    </div>
+
+    <!-- === SINGLE CANVAS ELEMENT === -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- === MODULE ENTRY === -->
+    <script type="module" src="js/main.js"></script>
+
+</body>
+</html>

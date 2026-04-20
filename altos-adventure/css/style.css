@@ -1,0 +1,311 @@
+/* ================================================
+   Alto's Adventure Clone — Premium UI Styling
+   ================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+
+/* === RESET & BASE === */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Outfit', sans-serif;
+    background: #0a0a1a;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* === HUD OVERLAY === */
+#hud {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 24px 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.hud-left, .hud-right {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.hud-label {
+    font-size: 11px;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.hud-value {
+    font-size: 28px;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    line-height: 1;
+}
+
+.hud-value.small {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+/* === COMBO DISPLAY === */
+#hud-combo {
+    position: fixed;
+    top: 50%;
+    right: 40px;
+    transform: translateY(-50%);
+    font-size: 48px;
+    font-weight: 800;
+    color: #fbbf24;
+    text-shadow:
+        0 0 20px rgba(251, 191, 36, 0.6),
+        0 0 40px rgba(251, 191, 36, 0.3);
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* === TRICK TEXT === */
+#hud-trick {
+    position: fixed;
+    top: 38%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 24px;
+    font-weight: 600;
+    color: #a78bfa;
+    text-shadow:
+        0 0 15px rgba(167, 139, 250, 0.8),
+        0 2px 8px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+    z-index: 10;
+    white-space: nowrap;
+    letter-spacing: 1px;
+}
+
+/* === STATE INDICATOR === */
+#hud-state {
+    position: fixed;
+    bottom: 24px;
+    left: 32px;
+    font-size: 12px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.3);
+    letter-spacing: 3px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* === START SCREEN === */
+#start-screen {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg,
+        rgba(30, 27, 75, 0.85) 0%,
+        rgba(15, 23, 42, 0.9) 100%);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 100;
+    gap: 24px;
+}
+
+.start-title {
+    font-size: 72px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #c4b5fd, #818cf8, #6366f1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+    line-height: 1;
+    letter-spacing: -2px;
+}
+
+.start-subtitle {
+    font-size: 16px;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.5);
+    letter-spacing: 6px;
+    text-transform: uppercase;
+}
+
+.start-instruction {
+    margin-top: 40px;
+    font-size: 18px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.7);
+    animation: pulse-text 2s ease-in-out infinite;
+}
+
+.start-controls {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.control-hint {
+    font-size: 13px;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.35);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.control-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+@keyframes pulse-text {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+}
+
+/* === GAME OVER SCREEN === */
+#game-over {
+    position: fixed;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg,
+        rgba(30, 27, 75, 0.88) 0%,
+        rgba(15, 23, 42, 0.95) 100%);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    z-index: 100;
+    gap: 16px;
+    animation: fade-in 0.5s ease;
+}
+
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.game-over-title {
+    font-size: 56px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #f87171, #ef4444, #dc2626);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+}
+
+.game-over-stats {
+    display: flex;
+    gap: 48px;
+    margin-top: 16px;
+}
+
+.stat-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.stat-value {
+    font-size: 36px;
+    font-weight: 800;
+    color: #fff;
+}
+
+.stat-label {
+    font-size: 12px;
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.4);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.game-over-restart {
+    margin-top: 32px;
+    font-size: 18px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.6);
+    animation: pulse-text 2s ease-in-out infinite;
+}
+
+/* === SPEED DISPLAY === */
+.hud-speed-container {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+#hud-speed {
+    font-size: 16px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 768px) {
+    .start-title {
+        font-size: 42px;
+    }
+
+    .hud-value {
+        font-size: 22px;
+    }
+
+    #hud {
+        padding: 16px 20px;
+    }
+
+    .game-over-title {
+        font-size: 36px;
+    }
+
+    .game-over-stats {
+        gap: 32px;
+    }
+
+    .stat-value {
+        font-size: 28px;
+    }
+}
