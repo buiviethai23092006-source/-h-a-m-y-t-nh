@@ -191,12 +191,13 @@
             this.startX = 0; // World X where heightMap[0] is
             this.maxCacheWidth = 3000; // Keep generating up to playerX + maxCacheWidth
 
-            this.baseHeight = 400;
+            this.baseHeight = 600; // Hạ thấp terrain xuống giữa màn hình
             this.maxDepth = 800; // How deep slopes can go (Canvas Y)
 
             // Initial generation
             this.noiseOffset = 0;
             this.lastCPHeight = this.baseHeight;
+            this.maxLevelY = this.baseHeight; // Tracking Y for monotonic downhills
             this.generatePoints(0, this.maxCacheWidth);
         }
 
@@ -209,9 +210,24 @@
                 const cps = [];
                 cps.push(this.lastCPHeight);
                 for (let i = 1; i < this.controlPointsPerChunk; i++) {
-                    let nx = (this.noiseOffset + i) * 0.025; // Perfect frequency for wide rolling hills
-                    let height = this.noise.fbm(nx, 0, 3, 0.5, 2.0, 1.0) * 1100; // Not too vertical, allowing momentum to carry over
-                    height += i * 35; // Macroscopic down-slope ensures you trend downwards overall
+                    let globalIndex = this.noiseOffset + i;
+
+                    // Đồng bằng xuất phát: 20 điểm đầu bị ép phẳng
+                    let activeIndex = Math.max(0, globalIndex - 20);
+
+                    let nx = activeIndex * 0.035; // Tần số thấp hơn → sóng rộng hơn, mượt hơn
+                    // Noise cơ bản tạo đường cong thoải
+                    let height = this.noise.noise2D(nx, 0) * 500;
+
+                    // Sóng lượn siêu rộng cho bề mặt nhấp nhô tự nhiên
+                    height += Math.sin(nx * 0.4) * 550;
+
+                    // Transition mượt từ đồng bằng
+                    let noiseFade = Math.min(1, activeIndex / 8);
+                    height *= noiseFade;
+
+                    const slopeMul = 100 + Math.abs(this.noise.noise2D(nx * 0.3, 5)) * 40; // 80-120 ngẫu nhiên
+                    height += activeIndex * slopeMul;
                     cps.push(height + this.baseHeight);
                 }
 
@@ -219,11 +235,23 @@
 
                 // Add to heightmap (skip first to avoid duplicate)
                 for (let i = 1; i < interpolated.length; i++) {
-                    this.heightMap.push(interpolated[i]);
+                    let y = interpolated[i];
+
+                    // Cho phép đồi cao tối đa 200px (y nhỏ hơn = cao hơn trên màn hình)
+                    if (y < this.maxLevelY - 200) {
+                        y = this.maxLevelY - 200; // Giới hạn độ cao đồi
+                    }
+                    // Cập nhật điểm thấp nhất (chỉ khi đi xuống sâu hơn)
+                    if (y > this.maxLevelY) {
+                        this.maxLevelY = y;
+                    }
+
+                    this.heightMap.push(y);
                 }
 
                 this.noiseOffset += this.controlPointsPerChunk;
-                this.lastCPHeight = cps[cps.length - 1];
+                // Use the clamped result for continuous connecting
+                this.lastCPHeight = this.maxLevelY;
                 targetX += this.chunkWidth;
             }
         }
@@ -260,13 +288,14 @@
     class PropManager {
         constructor(terrainManager) {
             this.terrainManager = terrainManager;
-            
+
             // Object Pools
             this.treePool = new ObjectPool(() => ({ x: 0, scale: 1, colorId: 0 }), 100);
             this.rockPool = new ObjectPool(() => ({ x: 0, scale: 1, smashed: false }), 40);
             this.campfirePool = new ObjectPool(() => ({ x: 0, scale: 1 }), 20);
             this.coinPool = new ObjectPool(() => ({ x: 0, y: 0, collected: false, animTime: 0 }), 150);
             this.llamaPool = new ObjectPool(() => ({ x: 0, y: 0, speed: 0, animTime: 0, collected: false }), 20);
+            this.chasmPool = new ObjectPool(() => ({ x: 0, width: 0, depth: 0, surfaceY: 0 }), 15);
 
             this.lastSpawnX = 0;
             this.spawnDistAhead = 2000;
@@ -289,6 +318,7 @@
             for (const c of this.campfirePool.pool) { if (c.active && c.x < cleanupLimit) c.active = false; }
             for (const c of this.coinPool.pool) { if (c.active && (c.x < cleanupLimit || c.collected)) c.active = false; }
             for (const l of this.llamaPool.pool) { if (l.active && (l.x < cleanupLimit || l.collected)) l.active = false; }
+            for (const ch of this.chasmPool.pool) { if (ch.active && ch.x + ch.width < cleanupLimit) ch.active = false; }
 
             // 3. Update active entities
             for (const llama of this.llamaPool.pool) {
@@ -336,38 +366,67 @@
                 }
 
                 if (typeRoll < 0.45) {
-                    // 45% chance: Coins Parabola
-                    const arcLength = 200 + (seed % 100);
-                    const arcHeight = 150 + (seed % 50);
-                    const pieces = 5 + (seed % 5); // 5 to 9 coins
+                    // 45% chance: Coins line along terrain (Alto's style)
+                    const spacing = 80;
+                    const pieces = 4 + (seed % 3); // 4-6 xu
                     for (let i = 0; i < pieces; i++) {
-                        const t = i / (pieces - 1);
-                        const cx = this.nextMajorSpawnX + t * arcLength;
-                        const cyBase = this.terrainManager.getHeightAt(cx);
-                        const cy = cyBase - 40 - (4 * arcHeight * t * (1 - t));
-                        
+                        const cx = this.nextMajorSpawnX + i * spacing;
+                        const cy = this.terrainManager.getHeightAt(cx) - 35;
+
+                        const coin = this.coinPool.get();
+                        coin.x = cx;
+                        coin.y = cy;
+                        coin.collected = false;
+                        coin.animTime = i * 0.5;
+                    }
+                    this.nextMajorSpawnX += pieces * spacing + 800 + (seed % 600);
+                }
+                else if (typeRoll < 0.60) {
+                    // 15% chance: CHASM (khe nứt vực sâu)
+                    const chasmWidth = 450 + (seed % 250); // 450-700px rộng (phải nhảy mới qua)
+                    const surfaceY = this.terrainManager.getHeightAt(this.nextMajorSpawnX);
+
+                    const chasm = this.chasmPool.get();
+                    chasm.x = this.nextMajorSpawnX;
+                    chasm.width = chasmWidth;
+                    chasm.depth = 600; // Sâu vực
+                    chasm.surfaceY = surfaceY;
+
+                    // Spawn xu vòng cung phía trên vực (phải nhảy qua mới ăn được)
+                    const coinCount = 4 + (seed % 3); // 4-6 xu
+                    for (let i = 0; i < coinCount; i++) {
+                        const t = i / (coinCount - 1);
+                        const cx = this.nextMajorSpawnX + t * chasmWidth;
+                        const arcH = 120 + (seed % 60);
+                        const cy = surfaceY - 50 - (4 * arcH * t * (1 - t));
+
                         const coin = this.coinPool.get();
                         coin.x = cx;
                         coin.y = cy;
                         coin.collected = false;
                         coin.animTime = t * Math.PI;
                     }
-                    this.nextMajorSpawnX += arcLength + 1500 + (seed % 800); // Buffer after arc finishes
+
+                    this.nextMajorSpawnX += chasmWidth + 1500 + (seed % 800);
                 }
-                else if (typeRoll < 0.70) {
-                    // 25% chance: Massive Rock
+                else if (typeRoll < 0.68) {
+                    // 8% chance: Rock obstacle (nhảy qua hoặc crash)
                     const rock = this.rockPool.get();
                     rock.x = this.nextMajorSpawnX;
-                    rock.scale = 1.8 + (seed % 60) / 100;
+                    rock.scale = 1.6 + (seed % 100) / 100; // 1.6-2.6 (tăng kích thước to hơn)
                     rock.smashed = false;
-                    this.nextMajorSpawnX += 1800 + (seed % 1000);
+                    this.nextMajorSpawnX += 1200 + (seed % 800);
                 }
-                else if (typeRoll < 0.85) {
-                    // 15% chance: Campfire Obstacle
+                else if (typeRoll < 0.76) {
+                    // 8% chance: Campfire obstacle (nhảy qua hoặc crash)
                     const camp = this.campfirePool.get();
                     camp.x = this.nextMajorSpawnX;
-                    camp.scale = 1.0;
-                    this.nextMajorSpawnX += 1800 + (seed % 800);
+                    camp.scale = 1.3; // (tăng kích thước to hơn)
+                    this.nextMajorSpawnX += 1200 + (seed % 800);
+                }
+                else if (typeRoll < 0.85) {
+                    // 9% chance: Skip
+                    this.nextMajorSpawnX += 1800 + (seed % 1000);
                 }
                 else {
                     // 15% chance: Llama
@@ -426,6 +485,80 @@
                     }
                 }
             }
+            // Chasms — rơi vào vực = chết
+            for (const ch of this.chasmPool.pool) {
+                if (ch.active && px > ch.x + 20 && px < ch.x + ch.width - 20) {
+                    // Player đang ở trên vực: nếu đang grounded (chạm đất) thì rơi xuống
+                    if (player.state === 'grounded') {
+                        player.vy = 50; // Rơi xuống
+                        player.changeState('airborne');
+                    }
+                    // Nếu rơi quá sâu dưới mặt tuyết → crash
+                    if (py > ch.surfaceY + 200 && player.state !== 'crashed') {
+                        player.changeState('crashed');
+                    }
+                }
+            }
+        }
+    }
+
+    // ========================================================
+    // PARTICLE SYSTEM (VFX: Snow Trail, Landing Burst, Speed Lines)
+    // ========================================================
+    class ParticleSystem {
+        constructor() { this.particles = []; }
+
+        emit(x, y, count, cfg) {
+            for (let i = 0; i < count; i++) {
+                let p = this.particles.find(q => q.life <= 0);
+                if (!p) {
+                    if (this.particles.length >= 500) continue;
+                    p = { life: 0 };
+                    this.particles.push(p);
+                }
+                p.x = x + (Math.random() - 0.5) * (cfg.spread || 0);
+                p.y = y + (Math.random() - 0.5) * (cfg.spreadY || 0);
+                p.vx = (cfg.vx || 0) + (Math.random() - 0.5) * (cfg.vxRand || 50);
+                p.vy = (cfg.vy || -50) + Math.random() * (cfg.vyRand || 50);
+                p.life = (cfg.life || 0.8) + Math.random() * (cfg.lifeRand || 0.3);
+                p.maxLife = p.life;
+                p.size = (cfg.size || 3) + Math.random() * (cfg.sizeRand || 1);
+                p.color = cfg.color || '#fff';
+                p.type = cfg.type || 'circle';
+                p.gravity = cfg.gravity !== undefined ? cfg.gravity : 200;
+            }
+        }
+
+        update(dt) {
+            for (const p of this.particles) {
+                if (p.life <= 0) continue;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                p.vy += p.gravity * dt;
+                p.life -= dt;
+            }
+        }
+
+        render(ctx) {
+            for (const p of this.particles) {
+                if (p.life <= 0) continue;
+                const a = MathUtils.clamp(p.life / p.maxLife, 0, 1);
+                ctx.globalAlpha = a;
+                if (p.type === 'line') {
+                    ctx.strokeStyle = p.color;
+                    ctx.lineWidth = p.size;
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    ctx.lineTo(p.x - 50, p.y);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * (0.3 + a * 0.7), 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            ctx.globalAlpha = 1;
         }
     }
 
@@ -437,10 +570,11 @@
             this.terrainManager = terrainManager;
             this.x = 200;
             this.y = 0;
-            this.vx = 400;
+            this.vx = 800; // Tốc độ khởi đầu chậm lại
             this.vy = 0;
-            this.rotation = 0; // Radians
-            this.state = 'grounded'; // grounded, airborne, flipping, crashed
+            this.rotation = 0;
+            this.state = 'grounded';
+            this.prevState = 'grounded';
 
             this.score = 0;
             this.distance = 0;
@@ -457,7 +591,11 @@
             this.airTime = 0;
             this.boostTimer = 0;
             this.crashTimer = 0;
-            this.isHoveringJump = false; // Input
+            this.isHoveringJump = false;
+
+            // VFX event flags
+            this.justLanded = false;
+            this.justBoosted = false;
 
             this.onGameOver = null;
         }
@@ -485,6 +623,9 @@
 
             if (!input.isDown) this.isHoveringJump = false;
 
+            // Đã giảm tốc độ xuống mức dễ chịu hơn: 50 - 80 (tương đương 500 đến 800 pixel/giây)
+            this.vx = MathUtils.clamp(this.vx, 500, 800);
+
             // Apply movement for grounded (others already applied)
             if (this.state === 'grounded') {
                 this.x += this.vx * dt;
@@ -504,17 +645,12 @@
             // 3. Gravity explicitly pushes or pulls speed on slopes
             this.vx += 850 * Math.sin(slope) * dt;
 
-            // 4. Momentum normalization
+            // Momentum normalization (chỉ nhẹ nhàng kéo giãn về giữa, vì hard clamp đã bắt buộc min max)
             if (this.vx > this.baseSpeed) {
-                // Friction gently degrades extreme downhill momentum back to the base driving speed over time
                 this.vx = MathUtils.lerp(this.vx, this.baseSpeed, 0.6 * dt);
             } else if (slope >= -0.15) {
-                // Forward drive exclusively kicks in on flats and downhills to pull you up to base speed
                 this.vx = MathUtils.lerp(this.vx, this.baseSpeed, 1.8 * dt);
             }
-
-            // 5. Absolute crawl minimum so you never get stuck infinitely
-            this.vx = Math.max(150, this.vx);
 
             // Rotate to match slope smoothly
             this.rotation = MathUtils.lerp(this.rotation, slope, 15 * dt);
@@ -564,6 +700,8 @@
                 this.comboMultiplier += 2;
                 this.score += 100 * this.flipsCompleted * this.comboMultiplier;
                 this.showTrickText(`Backflip x${this.flipsCompleted}!`);
+                this.boostTimer = 2.0;
+                this.justBoosted = true;
             }
 
             if (!input.isDown) this.changeState('airborne');
@@ -618,14 +756,15 @@
         }
 
         changeState(newState) {
+            this.prevState = this.state;
             this.state = newState;
             if (newState === 'airborne') {
                 this.airTime = 0;
                 this.flipAngleTotal = 0;
                 this.flipsCompleted = 0;
             }
-            if (newState === 'grounded' && this.comboMultiplier > 1 && this.trickTimer <= 0) {
-                // Combo reset timeout logic could go here
+            if (newState === 'grounded' && (this.prevState === 'airborne' || this.prevState === 'flipping')) {
+                this.justLanded = true;
             }
             if (newState === 'crashed') {
                 this.crashTimer = 0;
@@ -654,9 +793,7 @@
             // UI
             this.hudScore = document.getElementById('hud-score');
             this.hudDist = document.getElementById('hud-distance');
-            this.hudCombo = document.getElementById('hud-combo');
             this.hudTrick = document.getElementById('hud-trick');
-            this.hudState = document.getElementById('hud-state');
             this.hudSpeed = document.getElementById('hud-speed');
             this.screenStart = document.getElementById('start-screen');
             this.screenOver = document.getElementById('game-over');
@@ -671,12 +808,21 @@
             window.addEventListener('keydown', e => { if (e.code === 'Space' && !e.repeat) this.handleInputDown(e); });
             window.addEventListener('keyup', e => { if (e.code === 'Space') this.handleInputUp(e); });
 
-            // Particles (Weather)
+            // Snowflakes (Weather)
             this.snowflakes = Array.from({ length: 200 }, () => ({
                 x: Math.random() * 2000, y: Math.random() * 1000, s: Math.random() * 2 + 1, v: Math.random() * 50 + 20
             }));
 
-            this.gameState = 'MENU'; // MENU, PLAYING, OVER
+            // VFX Particle System
+            this.particles = new ParticleSystem();
+            this.shakeTimer = 0;
+            this.shakeIntensity = 0;
+
+            // Background Image
+            this.bgImg = new Image();
+            this.bgImg.src = 'T.jpg';
+
+            this.gameState = 'MENU';
             this.init();
 
             this.lastTime = performance.now();
@@ -685,13 +831,19 @@
 
         setupCanvas() {
             const dpr = window.devicePixelRatio || 1;
+            // Tạo góc nhìn rộng hơn: thu nhỏ thế giới 2D lại để bao quát rộng hơn (Zoom Out)
+            this.zoomScale = 0.6; // Tỷ lệ scale world nhỏ lại
+
             this.canvas.width = window.innerWidth * dpr;
             this.canvas.height = window.innerHeight * dpr;
-            this.ctx.scale(dpr, dpr);
-            this.w = window.innerWidth;
-            this.h = window.innerHeight;
-            this.cameraX = 0;
-            this.cameraY = 0;
+            this.ctx.scale(dpr * this.zoomScale, dpr * this.zoomScale);
+
+            // Tính lại w và h của viewport theo không gian world để culling không bị lỗi
+            this.w = window.innerWidth / this.zoomScale;
+            this.h = window.innerHeight / this.zoomScale;
+
+            if (this.cameraX === undefined) this.cameraX = 0;
+            if (this.cameraY === undefined) this.cameraY = 0;
         }
 
         init() {
@@ -723,6 +875,7 @@
             requestAnimationFrame((t) => this.loop(t));
             let dt = Math.min((now - this.lastTime) / 1000, 0.05);
             this.lastTime = now;
+            this.dt = dt;
 
             if (this.gameState === 'PLAYING' || this.gameState === 'OVER') {
                 this.player.update(dt, this.input);
@@ -731,17 +884,71 @@
                     this.propManager.update(dt, this.player.x);
                     this.propManager.checkCollisions(this.player);
                 }
+
+                // === VFX: Snow Trail (tuyết bắn khi trượt) ===
+                if (this.player.state === 'grounded') {
+                    const speed01 = (this.player.vx - 600) / 600;
+                    const trailCount = Math.floor(1 + speed01 * 3);
+                    this.particles.emit(this.player.x - 20, this.player.y, trailCount, {
+                        vx: -this.player.vx * 0.3, vxRand: 80,
+                        vy: -120, vyRand: 60,
+                        life: 0.3, lifeRand: 0.2,
+                        size: 2, sizeRand: 2,
+                        gravity: 150, spread: 10,
+                        color: '#000000' // Đuôi khói ván trượt màu đen
+                    });
+                }
+
+                // === VFX: Landing Burst (bụi tuyết tung khi tiếp đất) ===
+                if (this.player.justLanded) {
+                    this.player.justLanded = false;
+                    this.particles.emit(this.player.x, this.player.y, 25, {
+                        vx: 0, vxRand: 250,
+                        vy: -200, vyRand: 100,
+                        life: 0.5, lifeRand: 0.3,
+                        size: 3, sizeRand: 3,
+                        gravity: 300, spread: 30,
+                        color: '#c7d2fe'
+                    });
+                    this.shakeTimer = 0.15;
+                    this.shakeIntensity = 6;
+                }
+
+                // === VFX: Speed Lines (vệt sáng khi backflip boost) ===
+                if (this.player.justBoosted) {
+                    this.player.justBoosted = false;
+                    for (let i = 0; i < 15; i++) {
+                        this.particles.emit(
+                            this.player.x + 50 + Math.random() * 200,
+                            this.player.y - 40 + Math.random() * 80, 1, {
+                            vx: -600, vxRand: 200,
+                            vy: 0, vyRand: 20,
+                            life: 0.4, lifeRand: 0.3,
+                            size: 2, sizeRand: 1,
+                            gravity: 0, type: 'line',
+                            color: '#fbbf24'
+                        });
+                    }
+                }
+
+                if (this.player.boostTimer > 0) this.player.boostTimer -= dt;
+
             } else if (this.gameState === 'MENU') {
-                this.cameraX += 100 * dt; // gentle scroll
+                this.cameraX += 100 * dt;
                 this.terrain.update(this.cameraX + this.w);
             }
 
+            // Update VFX
+            this.particles.update(dt);
+            if (this.shakeTimer > 0) this.shakeTimer -= dt;
+
             // Camera follow
             if (this.gameState === 'PLAYING' || this.gameState === 'OVER') {
-                const targetCamX = this.player.x - 200; // Player kept left
-                const targetCamY = this.player.y - this.h * 0.6; // Player kept lower-middle
-                this.cameraX = MathUtils.lerp(this.cameraX, targetCamX, 5 * dt);
-                this.cameraY = MathUtils.lerp(this.cameraY, targetCamY, 5 * dt);
+                const lookAhead = Math.min(this.player.vx * 0.3, this.w * 0.4);
+                const targetCamX = this.player.x - this.w * 0.2 + lookAhead;
+                const targetCamY = this.player.y - this.h * 0.67; // Terrain ở 1/3 dưới màn hình
+                this.cameraX = MathUtils.lerp(this.cameraX, targetCamX, 15 * dt);
+                this.cameraY = MathUtils.lerp(this.cameraY, targetCamY, 15 * dt);
             }
 
             this.render();
@@ -750,72 +957,193 @@
 
         render() {
             const ctx = this.ctx;
-            ctx.clearRect(0, 0, this.w, this.h);
+            const dt = this.dt || 0.016;
 
-            // 1. Sky Gradient & Sun
-            const skyGrad = ctx.createLinearGradient(0, 0, 0, this.h);
-            skyGrad.addColorStop(0, '#1e1b4b');
-            skyGrad.addColorStop(0.5, '#4338ca');
-            skyGrad.addColorStop(1, '#fde68a'); // Warm sunset bottom
-            ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, this.w, this.h);
+            // Fix: clearRect needs canvas-space dimensions before scale
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            ctx.restore();
 
-            // Sun
-            ctx.fillStyle = 'rgba(255, 230, 200, 0.9)';
-            ctx.beginPath();
-            ctx.arc(this.w * 0.7, this.h * 0.4 - this.cameraY * 0.1, 40, 0, Math.PI * 2);
-            ctx.fill();
+            // 1. Background with subtle parallax
+            if (this.bgImg && this.bgImg.complete && this.bgImg.naturalWidth > 0) {
+                const imgRatio = this.bgImg.width / this.bgImg.height;
+                const canvasRatio = this.w / this.h;
+                let drawW = this.w;
+                let drawH = this.h;
+                let drawX = 0;
+                let drawY = 0;
+                if (imgRatio > canvasRatio) {
+                    drawW = this.h * imgRatio;
+                    drawX = (this.w - drawW) / 2;
+                } else {
+                    drawH = this.w / imgRatio;
+                    drawY = (this.h - drawH) / 2;
+                }
+                ctx.drawImage(this.bgImg, drawX, drawY, drawW, drawH);
+            } else {
+                ctx.fillStyle = '#1e1b4b';
+                ctx.fillRect(0, 0, this.w, this.h);
+            }
 
-            // 2. Parallax background Mountains (Silhouette layers)
-            this.drawParallaxLayer(0.2, '#312e81', 100, 300);
-            this.drawParallaxLayer(0.4, '#3730a3', 150, 400);
-            this.drawParallaxLayer(0.6, '#3f3cbb', 200, 500);
+            // Camera shake offset
+            const shakeX = this.shakeTimer > 0 ? (Math.random() - 0.5) * this.shakeIntensity : 0;
+            const shakeY = this.shakeTimer > 0 ? (Math.random() - 0.5) * this.shakeIntensity : 0;
 
             // Save state for world transform
             ctx.save();
-            ctx.translate(-this.cameraX, -this.cameraY);
+            ctx.translate(-this.cameraX + shakeX, -this.cameraY + shakeY);
 
-            // 3. Snowflakes Details layer (World space but unaffected by zoom/shake)
-            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            // 2. Snowflakes (fixed dt, full vertical coverage)
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
             this.snowflakes.forEach(s => {
-                s.y += s.v * 0.016; s.x -= 20 * 0.016;
-                // Wrap around camera
+                s.y += s.v * dt; s.x -= 30 * dt;
                 if (s.y > this.cameraY + this.h + 10) s.y = this.cameraY - 10;
+                if (s.y < this.cameraY - 50) s.y = this.cameraY + Math.random() * this.h;
                 if (s.x < this.cameraX - 10) s.x = this.cameraX + this.w + 10;
+                if (s.x > this.cameraX + this.w + 10) s.x = this.cameraX - 10;
                 ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2); ctx.fill();
             });
 
-            // 4. Terrain Solid Fill (Silhouettes style)
+            // 3. Terrain with gradient depth (3 layers + glow stroke)
             const mapSize = this.terrain.heightMap.size;
             const startX = this.terrain.startX;
             const segW = this.terrain.segmentWidth;
+            const btm = this.h + this.cameraY + 1000;
+            const camL = this.cameraX - 200;
+            const camR = this.cameraX + this.w + 200;
 
-            // Shadow/Base layer
-            ctx.fillStyle = '#6366f1';
+            // Layer 1: Deep shadow (darkest)
+            ctx.fillStyle = '#312e81';
             ctx.beginPath();
-            ctx.moveTo(startX, this.h + this.cameraY + 1000);
-            for (let i = 0; i < mapSize; i++) {
-                // Ensure we only draw inside viewport roughly
-                const x = startX + i * segW;
-                if (x > this.cameraX - 200 && x < this.cameraX + this.w + 200) {
-                    ctx.lineTo(x, this.terrain.heightMap.get(i));
-                }
-            }
-            ctx.lineTo(startX + (mapSize - 1) * segW, this.h + this.cameraY + 1000);
-            ctx.fill();
-
-            // White snow top layer offset
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.moveTo(startX, this.h + this.cameraY + 1000);
+            ctx.moveTo(startX, btm);
             for (let i = 0; i < mapSize; i++) {
                 const x = startX + i * segW;
-                if (x > this.cameraX - 200 && x < this.cameraX + this.w + 200) {
-                    ctx.lineTo(x, this.terrain.heightMap.get(i) - 15); // Shift up slightly
+                if (x > camL && x < camR) ctx.lineTo(x, this.terrain.heightMap.get(i) + 20);
+            }
+            ctx.lineTo(startX + (mapSize - 1) * segW, btm);
+            ctx.fill();
+
+            // Layer 2: Mid indigo shadow
+            ctx.fillStyle = '#4338ca';
+            ctx.beginPath();
+            ctx.moveTo(startX, btm);
+            for (let i = 0; i < mapSize; i++) {
+                const x = startX + i * segW;
+                if (x > camL && x < camR) ctx.lineTo(x, this.terrain.heightMap.get(i) + 5);
+            }
+            ctx.lineTo(startX + (mapSize - 1) * segW, btm);
+            ctx.fill();
+
+            // Layer 3: Snow surface
+            ctx.fillStyle = '#eef2ff';
+            ctx.beginPath();
+            ctx.moveTo(startX, btm);
+            for (let i = 0; i < mapSize; i++) {
+                const x = startX + i * segW;
+                if (x > camL && x < camR) ctx.lineTo(x, this.terrain.heightMap.get(i) - 8);
+            }
+            ctx.lineTo(startX + (mapSize - 1) * segW, btm);
+            ctx.fill();
+
+            // Snow highlight glow on top edge
+            ctx.strokeStyle = '#ffffff'; // Viền tuyết trắng sáng bật lại
+            ctx.lineWidth = 3;
+            ctx.shadowColor = 'rgba(255,255,255,0.4)';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            let firstPt = true;
+            for (let i = 0; i < mapSize; i++) {
+                const x = startX + i * segW;
+                if (x > camL && x < camR) {
+                    if (firstPt) { ctx.moveTo(x, this.terrain.heightMap.get(i) - 10); firstPt = false; }
+                    else ctx.lineTo(x, this.terrain.heightMap.get(i) - 10);
                 }
             }
-            ctx.lineTo(startX + (mapSize - 1) * segW, this.h + this.cameraY + 1000);
-            ctx.fill();
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // 4. CHASMS (khe nứt vực sâu)
+            for (const ch of this.propManager.chasmPool.pool) {
+                if (!ch.active) continue;
+                if (ch.x + ch.width < camL || ch.x > camR) continue;
+
+                const lx = ch.x;           // Mép trái vực
+                const rx = ch.x + ch.width; // Mép phải vực
+                const sy = ch.surfaceY;     // Mặt tuyết
+                const deep = sy + ch.depth; // Đáy vực
+
+                // Xóa vùng terrain tại vực (vẽ đè bằng nền tối)
+                ctx.fillStyle = '#0f0e2a';
+                ctx.fillRect(lx + 10, sy - 10, ch.width - 20, ch.depth + 100);
+
+                // Vách đá bên trái
+                ctx.fillStyle = '#44403c';
+                ctx.beginPath();
+                ctx.moveTo(lx, sy - 15);
+                ctx.lineTo(lx + 15, sy - 5);
+                ctx.lineTo(lx + 20, sy + 60);
+                ctx.lineTo(lx + 10, sy + 150);
+                ctx.lineTo(lx + 25, sy + 300);
+                ctx.lineTo(lx + 8, deep);
+                ctx.lineTo(lx - 5, deep);
+                ctx.lineTo(lx - 5, sy - 15);
+                ctx.fill();
+
+                // Chi tiết vách trái (lớp sáng hơn)
+                ctx.fillStyle = '#57534e';
+                ctx.beginPath();
+                ctx.moveTo(lx + 3, sy);
+                ctx.lineTo(lx + 15, sy + 20);
+                ctx.lineTo(lx + 12, sy + 80);
+                ctx.lineTo(lx + 18, sy + 200);
+                ctx.lineTo(lx + 5, sy + 300);
+                ctx.lineTo(lx, sy + 300);
+                ctx.lineTo(lx, sy);
+                ctx.fill();
+
+                // Vách đá bên phải
+                ctx.fillStyle = '#44403c';
+                ctx.beginPath();
+                ctx.moveTo(rx, sy - 15);
+                ctx.lineTo(rx - 15, sy - 5);
+                ctx.lineTo(rx - 20, sy + 60);
+                ctx.lineTo(rx - 10, sy + 150);
+                ctx.lineTo(rx - 25, sy + 300);
+                ctx.lineTo(rx - 8, deep);
+                ctx.lineTo(rx + 5, deep);
+                ctx.lineTo(rx + 5, sy - 15);
+                ctx.fill();
+
+                // Chi tiết vách phải
+                ctx.fillStyle = '#57534e';
+                ctx.beginPath();
+                ctx.moveTo(rx - 3, sy);
+                ctx.lineTo(rx - 15, sy + 20);
+                ctx.lineTo(rx - 12, sy + 80);
+                ctx.lineTo(rx - 18, sy + 200);
+                ctx.lineTo(rx - 5, sy + 300);
+                ctx.lineTo(rx, sy + 300);
+                ctx.lineTo(rx, sy);
+                ctx.fill();
+
+                // Tuyết trên đỉnh vách (mũ tuyết trắng)
+                ctx.fillStyle = '#eef2ff';
+                // Mũ trái
+                ctx.beginPath();
+                ctx.moveTo(lx - 10, sy - 15);
+                ctx.lineTo(lx + 18, sy - 10);
+                ctx.lineTo(lx + 12, sy - 3);
+                ctx.lineTo(lx - 10, sy - 8);
+                ctx.fill();
+                // Mũ phải
+                ctx.beginPath();
+                ctx.moveTo(rx + 10, sy - 15);
+                ctx.lineTo(rx - 18, sy - 10);
+                ctx.lineTo(rx - 12, sy - 3);
+                ctx.lineTo(rx + 10, sy - 8);
+                ctx.fill();
+            }
 
             // 5. Props (Trees, Rocks, Coins, Llamas)
             // Trees
@@ -892,19 +1220,33 @@
                 }
             }
 
-            // 6. Player Character
+            // 6. VFX Particles (world space)
+            this.particles.render(ctx);
+
+            // 7. Player Character
             if (this.gameState === 'PLAYING' || this.gameState === 'OVER') {
                 ctx.save();
                 ctx.translate(this.player.x, this.player.y - 5);
                 ctx.rotate(this.player.rotation);
 
-                // Scarf (Red trailing back)
+                // Boost glow aura
+                if (this.player.boostTimer > 0) {
+                    const glowAlpha = Math.min(1, this.player.boostTimer) * 0.4;
+                    ctx.shadowColor = '#fbbf24';
+                    ctx.shadowBlur = 25 + Math.sin(performance.now() * 0.01) * 10;
+                    ctx.fillStyle = `rgba(251, 191, 36, ${glowAlpha})`;
+                    ctx.beginPath(); ctx.arc(0, -15, 35, 0, Math.PI * 2); ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+
+                // Scarf (dynamic length based on speed)
                 ctx.fillStyle = '#ef4444';
+                const scarfLen = 30 + (this.player.vx - 600) / 600 * 20;
                 const flutter = Math.sin(performance.now() * 0.02) * 5;
                 ctx.beginPath();
                 ctx.moveTo(-5, -25);
-                ctx.lineTo(-35, -25 + flutter);
-                ctx.lineTo(-35, -20 + flutter);
+                ctx.lineTo(-5 - scarfLen, -25 + flutter);
+                ctx.lineTo(-5 - scarfLen, -20 + flutter);
                 ctx.lineTo(-5, -20);
                 ctx.fill();
 
@@ -926,30 +1268,8 @@
             ctx.restore(); // Restore world transform
         }
 
-        drawParallaxLayer(speedMult, color, baseYOffset, noiseScale) {
-            const ctx = this.ctx;
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            const relCameraX = this.cameraX * speedMult;
-            const screenStartX = relCameraX;
-            ctx.moveTo(0, this.h);
-
-            for (let x = 0; x < this.w; x += 20) {
-                const worldX = screenStartX + x;
-                const y = Math.sin(worldX / noiseScale) * 100 + Math.cos(worldX / (noiseScale * 2)) * 50;
-                ctx.lineTo(x, this.h - baseYOffset + y + this.cameraY * 0.2);
-            }
-            ctx.lineTo(this.w, this.h);
-            ctx.fill();
-        }
-
         updateHUD() {
             if (this.gameState !== 'PLAYING') return;
-
-            this.hudScore.textContent = Math.floor(this.player.score).toLocaleString();
-            this.hudDist.textContent = Math.floor(this.player.distance) + 'm';
-            this.hudSpeed.textContent = Math.floor(this.player.vx / 10) + ' km/h';
-            this.hudState.textContent = this.player.state.toUpperCase();
 
             // Trick Text
             if (this.player.trickTimer > 0) {
@@ -958,15 +1278,6 @@
                 this.hudTrick.style.transform = `translateX(-50%) translateY(${(1.5 - this.player.trickTimer) * -20}px)`;
             } else {
                 this.hudTrick.style.opacity = '0';
-            }
-
-            // Combo multiplier
-            if (this.player.comboMultiplier > 1) {
-                this.hudCombo.textContent = 'x' + this.player.comboMultiplier;
-                this.hudCombo.style.opacity = '1';
-                this.hudCombo.style.transform = `translateY(-50%) scale(${1 + this.player.comboMultiplier * 0.05})`;
-            } else {
-                this.hudCombo.style.opacity = '0';
             }
         }
     }

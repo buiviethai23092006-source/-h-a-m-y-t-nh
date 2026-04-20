@@ -82,8 +82,9 @@ class AirborneState extends BaseState {
             }
         }
 
-        // Fall off screen → crash
-        if (player.position.y < -100) {
+        // Fall off screen (chasm) → crash
+        // Dùng relative position so với terrainY thay vì absolute -100 vì terrain sẽ dốc xuống liên tục
+        if (player.position.y < terrainY - 50) {
             this.stateMachine.changeState('crashed');
         }
     }

@@ -67,17 +67,25 @@ class TerrainChunk {
         // === BƯỚC 1: Sinh control points từ Simplex Noise ===
         const cpCount = this.config.controlPoints;
         const controlPointsY = [];
-        const noiseScale = 0.025; // Scale cho noise — giá trị nhỏ = sóng nhẹ nhàng
 
         for (let i = 0; i < cpCount; i++) {
-            const nx = (noiseOffset + i) * noiseScale;
-            // fBm: 2 octave, persistence 0.5
-            let height = noise.fbm(nx, 0, 3, 0.5, 2.0, 1.0);
-            height *= this.config.maxHeight;
+            const globalIndex = noiseOffset + i;
+            
+            // 1. Trượt xuống liên tục (độ dốc nền -1.2 mỗi đoạn)
+            // Bắt buộc phải có hệ số kéo xuống rất mạnh để triệt tiêu các đoạn "lên dốc" của nhiễu.
+            const baseDownward = -globalIndex * 1.2; 
+            
+            // 2. Chế độ tạo hình bậc thang/thác (Thẳng - Dốc mạnh - Lên cực ngắn)
+            // Hàm nhiễu noise(x * 0.03) * 45 có đạo hàm cực đại khoảng 1.35
+            // Kết hợp với baseDownward (-1.2), địa hình sẽ có đạo hàm dốc nằm trong khoảng từ -2.55 (dốc cắm đầu) đến +0.15 (lên dốc cực nhẹ).
+            // Điều này đảm bảo 95% là dốc xuống hoặc đi ngang phẳng, chỉ có 5% là hơi gợn lên.
+            const hills = noise.noise(globalIndex * 0.03, 0) * 45;
 
-            // Thêm xu hướng đi xuống (slope) để tạo cảm giác trượt dốc
-            const downwardSlope = -i * 0.8;
-            height += downwardSlope + this.config.baseHeight;
+            // 3. Đá dăm nhỏ gợn sóng bề mặt
+            const bumps = noise.noise(globalIndex * 0.15, 100) * 1.5;
+
+            // Tổng hợp lại
+            let height = this.config.baseHeight + baseDownward + hills + bumps;
 
             controlPointsY.push(height);
         }

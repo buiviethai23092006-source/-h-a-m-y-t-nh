@@ -19,7 +19,7 @@
 <body>
 
     <!-- === HUD OVERLAY === -->
-    <div id="hud">
+    <div id="hud" style="display: none;">
         <div class="hud-left">
             <span class="hud-label">Score</span>
             <span class="hud-value" id="hud-score">0</span>
@@ -33,14 +33,10 @@
         </div>
     </div>
 
-    <!-- === COMBO DISPLAY === -->
-    <div id="hud-combo">x1</div>
 
     <!-- === TRICK TEXT === -->
     <div id="hud-trick"></div>
 
-    <!-- === STATE INDICATOR === -->
-    <div id="hud-state">GROUNDED</div>
 
     <!-- === START SCREEN === -->
     <div id="start-screen">
@@ -61,7 +57,7 @@
     <div id="game-over">
         <div class="game-over-title">Game Over</div>
         <div class="game-over-stats">
-            <div class="stat-block">
+            <div class="stat-block" style="display: none;">
                 <span class="stat-value" id="final-score">0</span>
                 <span class="stat-label">Score</span>
             </div>
